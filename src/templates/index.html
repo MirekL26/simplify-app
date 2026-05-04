@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud B1 Simplifier</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 2rem; }
+        h1 { font-size: 1.8rem; margin-bottom: 0.3rem; color: #7dd3fc; }
+        .subtitle { color: #94a3b8; margin-bottom: 2rem; font-size: 0.9rem; }
+        .card { background: #1e293b; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #334155; }
+        .card h2 { font-size: 1rem; color: #94a3b8; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .upload-area { border: 2px dashed #334155; border-radius: 8px; padding: 2rem; text-align: center; cursor: pointer; transition: border-color 0.2s; }
+        .upload-area:hover, .upload-area.drag { border-color: #7dd3fc; }
+        .upload-area input { display: none; }
+        .btn { background: #0ea5e9; color: white; border: none; padding: 0.6rem 1.4rem; border-radius: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600; transition: background 0.2s; }
+        .btn:hover { background: #0284c7; }
+        .btn:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+        .btn-danger { background: #ef4444; }
+        .btn-danger:hover { background: #dc2626; }
+        .progress-bar { height: 8px; background: #334155; border-radius: 4px; overflow: hidden; margin: 0.8rem 0; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #0ea5e9, #7dd3fc); transition: width 0.3s; border-radius: 4px; }
+        .status { font-size: 0.85rem; color: #94a3b8; }
+        .status.ok { color: #4ade80; }
+        .status.err { color: #f87171; }
+        .token-badge { display: inline-block; background: #0ea5e920; border: 1px solid #0ea5e940; color: #7dd3fc; padding: 0.2rem 0.6rem; border-radius: 20px; font-size: 0.8rem; margin-left: 0.5rem; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        th { text-align: left; color: #64748b; font-weight: 500; padding: 0.4rem 0.5rem; border-bottom: 1px solid #334155; }
+        td { padding: 0.5rem; border-bottom: 1px solid #1e293b; }
+        tr:hover td { background: #ffffff08; }
+        .file-size { color: #64748b; }
+        #drop-label { color: #94a3b8; }
+        #selected-file { margin-top: 0.5rem; color: #7dd3fc; font-size: 0.85rem; }
+    </style>
+</head>
+<body>
+    <h1>Cloud B1 Simplifier</h1>
+    <p class="subtitle">Simplify English ebooks to B1 level</p>
+
+    <div class="card">
+        <h2>Upload ebook (.txt)</h2>
+        <div class="upload-area" id="drop-zone">
+            <input type="file" id="file-input" accept=".txt">
+            <p id="drop-label">Drag a file or <strong>click to select</strong></p>
+            <p id="selected-file"></p>
+        </div>
+        <div style="margin-top:1rem; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+            <select id="model-select" style="background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:8px; padding:0.5rem 0.8rem; font-size:0.9rem; cursor:pointer;">
+                {% for model_id, info in models.items() %}
+                <option value="{{ model_id }}">{{ info.label }}</option>
+                {% endfor %}
+            </select>
+            <select id="action-select" style="background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:8px; padding:0.5rem 0.8rem; font-size:0.9rem; cursor:pointer;">
+                <option value="simplify">Simplify English to B1</option>
+                <option value="translate">Translate Czech to B1 English</option>
+            </select>
+            <button class="btn" id="start-btn" disabled>Start</button>
+            <span class="status" id="upload-status"></span>
+        </div>
+    </div>
+
+    <div class="card" id="progress-card" style="display:none">
+        <h2>Progress <span class="token-badge" id="token-badge">0 tokens</span></h2>
+        <p style="margin-bottom:0.5rem" id="progress-filename"></p>
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+        <div style="display:flex; justify-content:space-between;">
+            <span class="status" id="progress-status">Waiting...</span>
+            <span class="status" id="progress-percent">0%</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Token Usage (today)</h2>
+        <div id="token-stats" style="color:#94a3b8; font-size:0.9rem;">Loading...</div>
+    </div>
+
+    <div class="card">
+        <h2>Total History</h2>
+        <div id="token-history" style="color:#94a3b8; font-size:0.9rem;">Loading...</div>
+    </div>
+
+    <div class="card">
+        <h2>Completed Files</h2>
+        <div id="files-list"><p style="color:#64748b">No files</p></div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const startBtn = document.getElementById('start-btn');
+        const selectedFile = document.getElementById('selected-file');
+        let selectedFileObj = null;
+        let currentTaskId = null;
+        let pollInterval = null;
+
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', e => selectFile(e.target.files[0]));
+        dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+        dropZone.addEventListener('drop', e => {
+            e.preventDefault(); dropZone.classList.remove('drag');
+            selectFile(e.dataTransfer.files[0]);
+        });
+
+        function selectFile(file) {
+            if (!file) return;
+            selectedFileObj = file;
+            const kb = (file.size / 1024).toFixed(0);
+            selectedFile.textContent = file.name + ' (' + kb + ' KB)';
+            startBtn.disabled = false;
+        }
+
+        startBtn.addEventListener('click', async () => {
+            if (!selectedFileObj) return;
+            startBtn.disabled = true;
+            document.getElementById('upload-status').textContent = 'Uploading...';
+
+            const model = document.getElementById('model-select').value;
+            const action = document.getElementById('action-select').value;
+            const form = new FormData();
+            form.append('file', selectedFileObj);
+
+            const res = await fetch('/api/simplify?model=' + encodeURIComponent(model) + '&action=' + encodeURIComponent(action), { method: 'POST', body: form });
+            const data = await res.json();
+            currentTaskId = data.task_id;
+
+            document.getElementById('progress-card').style.display = 'block';
+            document.getElementById('progress-filename').textContent = data.filename;
+            document.getElementById('upload-status').textContent = '';
+            pollProgress();
+        });
+
+        function pollProgress() {
+            pollInterval = setInterval(async () => {
+                if (!currentTaskId) return;
+                const res = await fetch('/api/task/' + currentTaskId);
+                const task = await res.json();
+
+                document.getElementById('progress-fill').style.width = task.percent + '%';
+                document.getElementById('progress-percent').textContent = task.percent + '%';
+                document.getElementById('token-badge').textContent = (task.total_tokens || 0).toLocaleString() + ' tokens';
+
+                if (task.status === 'running') {
+                    document.getElementById('progress-status').textContent =
+                        'Chunk ' + task.current + '/' + task.total + '...';
+                } else if (task.status === 'completed') {
+                    document.getElementById('progress-status').className = 'status ok';
+                    document.getElementById('progress-status').textContent =
+                        'Done! ' + (task.total_tokens || 0).toLocaleString() + ' tokens total';
+                    clearInterval(pollInterval);
+                    loadFiles();
+                    loadTokenStats();
+                    startBtn.disabled = false;
+                } else if (task.status === 'error') {
+                    document.getElementById('progress-status').className = 'status err';
+                    document.getElementById('progress-status').textContent = 'Error: ' + task.error;
+                    clearInterval(pollInterval);
+                    startBtn.disabled = false;
+                }
+            }, 1500);
+        }
+
+        async function loadFiles() {
+            const res = await fetch('/api/files');
+            const { files } = await res.json();
+            const el = document.getElementById('files-list');
+            if (!files.length) { el.innerHTML = '<p style="color:#64748b">No files</p>'; return; }
+            el.innerHTML = '<table><tr><th>File</th><th>Size</th><th>Date</th><th></th></tr>' +
+                files.map(f => '<tr><td>' + f.name + '</td><td class="file-size">' +
+                    (f.size/1024).toFixed(0) + ' KB</td><td class="file-size">' +
+                    f.modified.slice(0,16).replace('T',' ') + '</td><td>' +
+                    '<a href="/api/download/' + f.name + '" download><button class="btn" style="padding:0.3rem 0.8rem;font-size:0.8rem">Download</button></a> ' +
+                    '<button class="btn btn-danger" style="padding:0.3rem 0.8rem;font-size:0.8rem" onclick="deleteFile(\'' + f.name + '\')">Delete</button>' +
+                    '</td></tr>').join('') + '</table>';
+        }
+
+        async function deleteFile(name) {
+            if (!confirm('Delete ' + name + '?')) return;
+            await fetch('/api/files/' + name, { method: 'DELETE' });
+            loadFiles();
+        }
+
+        async function loadTokenStats() {
+            const res = await fetch('/api/tokens');
+            const data = await res.json();
+            const today = new Date().toISOString().slice(0,10);
+            const el = document.getElementById('token-stats');
+            const todayData = data[today];
+            if (!todayData) { el.textContent = 'No data for today'; return; }
+            el.innerHTML = 'Prompt: <strong>' + todayData.prompt_tokens.toLocaleString() + '</strong> &nbsp;|&nbsp; ' +
+                'Completion: <strong>' + todayData.completion_tokens.toLocaleString() + '</strong> &nbsp;|&nbsp; ' +
+                'Today: <strong style="color:#7dd3fc">' + todayData.total.toLocaleString() + '</strong>';
+        }
+
+        async function loadTokenHistory() {
+            const res = await fetch('/api/tokens');
+            const data = await res.json();
+            const el = document.getElementById('token-history');
+            const days = Object.keys(data).sort().reverse();
+            if (!days.length) { el.textContent = 'No data'; return; }
+
+            let totalPrompt = 0, totalCompletion = 0, totalAll = 0;
+            for (const d of days) {
+                totalPrompt += data[d].prompt_tokens || 0;
+                totalCompletion += data[d].completion_tokens || 0;
+                totalAll += data[d].total || 0;
+            }
+
+            const today = new Date().toISOString().slice(0,10);
+            let rows = days.map(d => {
+                const label = d === today ? 'Today' : d;
+                const bold = d === today ? ' style="color:#e2e8f0"' : '';
+                return '<tr' + bold + '><td>' + label + '</td><td>' +
+                    (data[d].prompt_tokens || 0).toLocaleString() + '</td><td>' +
+                    (data[d].completion_tokens || 0).toLocaleString() + '</td><td>' +
+                    (data[d].total || 0).toLocaleString() + '</td></tr>';
+            }).join('');
+
+            el.innerHTML = '<table><tr><th>Date</th><th>Prompt</th><th>Completion</th><th>Total</th></tr>' +
+                rows +
+                '<tr style="color:#7dd3fc; font-weight:600; border-top:2px solid #334155">' +
+                '<td>TOTAL</td><td>' + totalPrompt.toLocaleString() + '</td><td>' +
+                totalCompletion.toLocaleString() + '</td><td>' + totalAll.toLocaleString() + '</td></tr></table>';
+        }
+
+        loadFiles();
+        loadTokenStats();
+        loadTokenHistory();
+    </script>
+</body>
+</html>

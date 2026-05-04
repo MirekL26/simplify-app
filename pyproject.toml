@@ -1,0 +1,19 @@
+[project]
+name = "cloud-b1-simplifier"
+version = "2.0.0"
+description = "Web app for simplifying English ebooks to B1 level using local LLMs"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "aiohttp>=3.10.0",
+    "jinja2>=3.1.4",
+    "python-multipart>=0.0.9",
+    "aiofiles>=24.1.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+cloud-simplifier = "src.main:app"

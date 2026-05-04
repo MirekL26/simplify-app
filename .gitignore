@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.virtualenv/
+
+# Provozní data
+uploads/
+saved/
+*.log
+token_log.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+simplify-app_for_github.md
